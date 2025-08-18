@@ -1,4 +1,3 @@
-
 ## 🚀 Real-World Project: Log Processing Service
 
 ### 🎯 Project Goal
@@ -132,3 +131,25 @@ log-processing-service/
 * Aggregated stats stored in a DB.
 * REST API to query results.
 * Proper handling of cancellations and shutdowns.
+
+---
+
+## 🧪 Local Mock Log Generator
+
+A lightweight WebSocket stream to feed the system during development.
+
+- Endpoint: WS ws://localhost:8080/ws/logs
+- Message format: JSON per message (one log entry)
+- Query params:
+  - interval_ms: integer (10..10000). Default: random up to 1000ms.
+  - service: fixed service name override (e.g., auth).
+  - level: fixed level override (INFO|WARN|ERROR).
+  - level_weights: weighted distribution for levels. Format: INFO:70,WARN:20,ERROR:10
+  - debug: if present, logs each emitted line on the server.
+
+Examples:
+- websocat ws://localhost:8080/ws/logs?interval_ms=200&level_weights=INFO:80,WARN:15,ERROR:5
+- websocat ws://localhost:8080/ws/logs?service=payments&level=ERROR&debug=1
+
+Sample message:
+{"timestamp": 1735668123456, "level": "INFO", "message": "order created", "service": "orders", "component": "api", "trace_id": "...", "span_id": "...", "parent_id": "..."}
