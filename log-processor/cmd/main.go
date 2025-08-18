@@ -3,41 +3,58 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os/signal"
 	"syscall"
 	"time"
 
-	api "github.com/ali-assar/Log-Processing-Service/log-processor/internal/api"
 	receiver "github.com/ali-assar/Log-Processing-Service/log-processor/internal/receiver"
 )
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-
+	log.Println("Starting Log Processing Service...")
 	// TODO: make configurable via flags/env.
 	generatorURL := "ws://localhost:8080/ws/logs"
 
 	// Start the receiver (WebSocket client) in the background.
+	receiverErr := make(chan error, 1)
 	go func() {
 		if err := receiver.Start(ctx, generatorURL); err != nil {
-			log.Printf("receiver stopped: %v", err)
+			log.Printf("Receiver stopped: %v", err)
+			receiverErr <- err
 		}
 	}()
 
+	select {
+	case <-ctx.Done():
+		log.Println("Shutdown signal received, waiting for graceful shutdown...")
+		// Give some time for graceful shutdown
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+
+		select {
+		case <-shutdownCtx.Done():
+			log.Println("Shutdown timeout reached")
+		case err := <-receiverErr:
+			log.Printf("Receiver stopped during shutdown: %v", err)
+		}
+	case err := <-receiverErr:
+		log.Printf("Receiver failed: %v", err)
+	}
+
 	// HTTP API (for future /stats, etc.) on a different port to avoid conflicts.
-	mux := http.NewServeMux()
-	api.RegisterRoutes(mux)
+	// mux := http.NewServeMux()
+	// api.RegisterRoutes(mux)
 
-	srv := &http.Server{
-		Addr:              ":8090",
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	// srv := &http.Server{
+	// 	Addr:              ":8080",
+	// 	Handler:           mux,
+	// 	ReadHeaderTimeout: 5 * time.Second,
+	// }
 
-	log.Println("log-processor HTTP API listening on :8090")
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("http server error: %v", err)
-	}
+	// log.Println("log-processor HTTP API listening on :8080")
+	// if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	// 	log.Fatalf("http server error: %v", err)
+	// }
 }
