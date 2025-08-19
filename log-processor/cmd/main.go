@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ali-assar/Log-Processing-Service/log-processor/internal/cli"
 	receiver "github.com/ali-assar/Log-Processing-Service/log-processor/internal/receiver"
 	"github.com/ali-assar/Log-Processing-Service/log-processor/internal/workerpool"
 )
@@ -38,10 +39,9 @@ func main() {
 	pool := workerpool.Start(ctx, 50, 2048, store)
 	defer pool.Close()
 
-	var sources = []string{
-		"ws://localhost:8080/ws/logs",
-		// add more sources here
-
+	cfg, err := cli.Parse()
+	if err != nil {
+		log.Fatalf("failed to parse CLI args: %v", err)
 	}
 
 	go func() {
@@ -58,8 +58,8 @@ func main() {
 		}
 	}()
 
-	errCh := make(chan error, len(sources))
-	for _, u := range sources {
+	errCh := make(chan error, len(cfg.Urls))
+	for _, u := range cfg.Urls {
 		u := u
 		go func() {
 			if err := receiver.Start(ctx, u, pool); err != nil {
