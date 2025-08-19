@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ali-assar/Log-Processing-Service/mock-log-generator/internal/cli"
 	"github.com/ali-assar/Log-Processing-Service/mock-log-generator/internal/generator"
 	"github.com/ali-assar/Log-Processing-Service/mock-log-generator/internal/types"
 	"github.com/gorilla/websocket"
@@ -19,11 +20,13 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-func RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/ws/logs", WSLogsHandler)
+func RegisterRoutes(mux *http.ServeMux, cfg *cli.Config) {
+	mux.HandleFunc("/ws/logs", func(w http.ResponseWriter, r *http.Request) {
+		WSLogsHandler(w, r, cfg)
+	})
 }
 
-func WSLogsHandler(w http.ResponseWriter, r *http.Request) {
+func WSLogsHandler(w http.ResponseWriter, r *http.Request, cfg *cli.Config) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		http.Error(w, "websocket upgrade failed", http.StatusBadRequest)
@@ -36,7 +39,7 @@ func WSLogsHandler(w http.ResponseWriter, r *http.Request) {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	// interval_ms param (10..10000); default: random up to 1000ms
-	interval := time.Duration(rng.Intn(10)) * time.Millisecond
+	interval := time.Duration(rng.Intn(cfg.IntervalMS)) * time.Millisecond
 	if s := r.URL.Query().Get("interval_ms"); s != "" {
 		if v, err := strconv.Atoi(s); err == nil {
 			if v < 10 {
