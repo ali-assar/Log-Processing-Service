@@ -4,59 +4,75 @@ import (
 	"context"
 	"log"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	receiver "github.com/ali-assar/Log-Processing-Service/log-processor/internal/receiver"
+	"github.com/ali-assar/Log-Processing-Service/log-processor/internal/workerpool"
 )
+
+type inMemoryStore struct {
+	mu     sync.Mutex
+	counts map[string]map[string]int
+}
+
+func (s *inMemoryStore) IncrementLevelCount(svc, lvl string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.counts[svc] == nil {
+		s.counts[svc] = map[string]int{}
+	}
+	s.counts[svc][lvl]++
+	return nil
+}
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	log.Println("Starting Log Processing Service...")
-	// TODO: make configurable via flags/env.
-	var generatorURL []string
-	generatorURL = append(generatorURL, "ws://localhost:8080/ws/logs")
 
-	receiverErr := make(chan error, 1)
-	for _, v := range generatorURL {
+	// Create storage (temporary in-memory while learning)
+	store := &inMemoryStore{counts: map[string]map[string]int{}}
+
+	// Start pool: e.g., 8 workers, queue size 1024
+	pool := workerpool.Start(ctx, 50, 2048, store)
+	defer pool.Close()
+
+	var sources = []string{
+		"ws://localhost:8080/ws/logs",
+		// add more sources here
+
+	}
+
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s := pool.Stats()
+				log.Printf("POOL stats: processed=%d queue=%d workers=%d", s.Processed, s.Queue, s.Workers)
+			}
+		}
+	}()
+
+	errCh := make(chan error, len(sources))
+	for _, u := range sources {
+		u := u
 		go func() {
-			if err := receiver.Start(ctx, v); err != nil {
-				log.Printf("Receiver stopped: %v", err)
-				receiverErr <- err
+			if err := receiver.Start(ctx, u, pool); err != nil {
+				errCh <- err
 			}
 		}()
 	}
 
 	select {
 	case <-ctx.Done():
-		log.Println("Shutdown signal received, waiting for graceful shutdown...")
-		// Give some time for graceful shutdown
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer shutdownCancel()
-
-		select {
-		case <-shutdownCtx.Done():
-			log.Println("Shutdown timeout reached")
-		case err := <-receiverErr:
-			log.Printf("Receiver stopped during shutdown: %v", err)
-		}
-	case err := <-receiverErr:
-		log.Printf("Receiver failed: %v", err)
+	case err := <-errCh:
+		log.Printf("receiver error: %v", err)
 	}
-
-	// HTTP API (for future /stats, etc.) on a different port to avoid conflicts.
-	// mux := http.NewServeMux()
-	// api.RegisterRoutes(mux)
-
-	// srv := &http.Server{
-	// 	Addr:              ":8080",
-	// 	Handler:           mux,
-	// 	ReadHeaderTimeout: 5 * time.Second,
-	// }
-
-	// log.Println("log-processor HTTP API listening on :8080")
-	// if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-	// 	log.Fatalf("http server error: %v", err)
-	// }
+	// pool.Close() deferred
+	_ = time.Second
 }

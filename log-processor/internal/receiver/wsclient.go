@@ -6,13 +6,14 @@ import (
 	"log"
 	"time"
 
-	"github.com/ali-assar/Log-Processing-Service/log-processor/pkg/models"
+	"github.com/ali-assar/Log-Processing-Service/log-processor/internal/parser"
+	"github.com/ali-assar/Log-Processing-Service/log-processor/internal/workerpool"
 	"github.com/gorilla/websocket"
 )
 
 // Start connects to the generator WebSocket and streams messages.
 // TODO: Forward decoded messages to parser/workerpool.
-func Start(ctx context.Context, url string) error {
+func Start(ctx context.Context, url string, pool *workerpool.Pool) error {
 	log.Printf("Connecting to WebSocket server at: %s", url)
 
 	dialer := &websocket.Dialer{
@@ -70,6 +71,9 @@ func Start(ctx context.Context, url string) error {
 	}()
 
 	messageCount := 0
+	var ignored, parseErrs, parsedOK, submitted, dropped int
+	lastLog := time.Now()
+
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
@@ -84,28 +88,36 @@ func Start(ctx context.Context, url string) error {
 
 		messageCount++
 
-		var logEntry models.LogEntry
-		if err := json.Unmarshal(message, &logEntry); err != nil {
-			var connMsg map[string]interface{}
-			if err := json.Unmarshal(message, &connMsg); err == nil {
-				if status, ok := connMsg["status"].(string); ok && status == "connected" {
-					log.Printf("Connection confirmed. Server interval: %v ms", connMsg["interval_ms"])
-					continue
+		var probe struct {
+			Level string `json:"level"`
+		}
+		if err := json.Unmarshal(message, &probe); err == nil && probe.Level == "" {
+			if messageCount <= 3 {
+				log.Printf("ignoring non-log frame: %s", message)
+			}
+			ignored++
+			// fall through to summary logging below
+		} else {
+			entry, err := parser.Parse(message)
+			if err != nil {
+				log.Printf("parse error: %v", err)
+				parseErrs++
+			} else {
+				parsedOK++
+				if pool.SubmitWithTimeout(entry, 10*time.Millisecond) {
+					submitted++
+				} else {
+					dropped++
 				}
 			}
-
-			// If neither, log as raw message
-			log.Printf("Received raw message: %s", message)
-			continue
 		}
 
-		// Process the log entry
-		log.Printf("[%s] %s/%s: %s", logEntry.Timestamp, logEntry.Service, logEntry.Level, logEntry.Message)
-
-		// TODO: Forward to parser/workerpool for further processing
-		// For now, just log the received entries
-		if messageCount%100 == 0 {
-			log.Printf("Processed %d messages so far", messageCount)
+		// Periodic summary: every 100 msgs or every 2s
+		if messageCount%100 == 0 || time.Since(lastLog) > 2*time.Second {
+			stats := pool.Stats()
+			log.Printf("ws=%s total=%d ok=%d parse_err=%d ignored=%d submitted=%d dropped=%d queue=%d processed=%d workers=%d",
+				url, messageCount, parsedOK, parseErrs, ignored, submitted, dropped, stats.Queue, stats.Processed, stats.Workers)
+			lastLog = time.Now()
 		}
 	}
 }

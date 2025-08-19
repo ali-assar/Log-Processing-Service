@@ -36,7 +36,7 @@ func WSLogsHandler(w http.ResponseWriter, r *http.Request) {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	// interval_ms param (10..10000); default: random up to 1000ms
-	interval := time.Duration(rng.Intn(1000)) * time.Millisecond
+	interval := time.Duration(rng.Intn(10)) * time.Millisecond
 	if s := r.URL.Query().Get("interval_ms"); s != "" {
 		if v, err := strconv.Atoi(s); err == nil {
 			if v < 10 {
