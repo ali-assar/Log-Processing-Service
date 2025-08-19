@@ -15,16 +15,18 @@ func main() {
 	defer cancel()
 	log.Println("Starting Log Processing Service...")
 	// TODO: make configurable via flags/env.
-	generatorURL := "ws://localhost:8080/ws/logs"
+	var generatorURL []string
+	generatorURL = append(generatorURL, "ws://localhost:8080/ws/logs")
 
-	// Start the receiver (WebSocket client) in the background.
 	receiverErr := make(chan error, 1)
-	go func() {
-		if err := receiver.Start(ctx, generatorURL); err != nil {
-			log.Printf("Receiver stopped: %v", err)
-			receiverErr <- err
-		}
-	}()
+	for _, v := range generatorURL {
+		go func() {
+			if err := receiver.Start(ctx, v); err != nil {
+				log.Printf("Receiver stopped: %v", err)
+				receiverErr <- err
+			}
+		}()
+	}
 
 	select {
 	case <-ctx.Done():

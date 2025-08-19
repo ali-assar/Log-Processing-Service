@@ -42,7 +42,6 @@ func Start(ctx context.Context, url string) error {
 		_ = conn.Close()
 	}()
 
-	// Set up ping/pong handlers for connection health
 	conn.SetPingHandler(func(data string) error {
 		log.Printf("Received ping from server")
 		return conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(time.Second))
@@ -53,7 +52,6 @@ func Start(ctx context.Context, url string) error {
 		return nil
 	})
 
-	// Start ping ticker to keep connection alive
 	pingTicker := time.NewTicker(30 * time.Second)
 	defer pingTicker.Stop()
 
@@ -75,7 +73,6 @@ func Start(ctx context.Context, url string) error {
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			// Exit cleanly if context is done.
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -87,10 +84,8 @@ func Start(ctx context.Context, url string) error {
 
 		messageCount++
 
-		// Try to parse as JSON log entry
 		var logEntry models.LogEntry
 		if err := json.Unmarshal(message, &logEntry); err != nil {
-			// If not a log entry, check if it's a connection message
 			var connMsg map[string]interface{}
 			if err := json.Unmarshal(message, &connMsg); err == nil {
 				if status, ok := connMsg["status"].(string); ok && status == "connected" {
