@@ -8,11 +8,12 @@ import (
 )
 
 type Config struct {
-	Urls []string
+	Urls     []string
+	HTTPAddr string
 }
 
-func NewRoot() (*cobra.Command, *string) {
-	var urls string
+func NewRoot() (*cobra.Command, *string, *string) {
+	var urls, httpAddr string
 
 	cmd := &cobra.Command{
 		Use:   "log-processor",
@@ -21,11 +22,13 @@ func NewRoot() (*cobra.Command, *string) {
 
 	// Example: --urls "ws://localhost:8080/ws/logs,ws://localhost:9090/ws/logs"
 	cmd.Flags().StringVarP(&urls, "urls", "u", "", "Comma-separated list of WebSocket URLs (e.g., ws://localhost:8080/ws/logs)")
+	cmd.Flags().StringVarP(&httpAddr, "http-addr", "a", ":9090", "HTTP listen address for the stats API (e.g., :9090)")
+
 	err := cmd.MarkFlagRequired("urls")
 	if err != nil {
 		log.Fatal(err)
 	}
-	return cmd, &urls
+	return cmd, &urls, &httpAddr
 }
 
 func UrlToSlice(urls string) []string {
@@ -45,13 +48,12 @@ func UrlToSlice(urls string) []string {
 }
 
 func Parse() (*Config, error) {
-	cmd, urls := NewRoot()
+	cmd, urls, addr := NewRoot()
 	if err := cmd.Execute(); err != nil {
 		return nil, err
 	}
-
-	urlSlice := UrlToSlice(*urls)
 	return &Config{
-		Urls: urlSlice,
+		Urls:     UrlToSlice(*urls),
+		HTTPAddr: *addr,
 	}, nil
 }

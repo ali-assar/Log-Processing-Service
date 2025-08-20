@@ -73,7 +73,7 @@ func main() {
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux, func() workerpool.Stats { return pool.Stats() })
 
-	srv := &http.Server{Addr: ":9090", Handler: mux}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
 
 	// Start server
 	go func() {
