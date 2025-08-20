@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/ali-assar/Log-Processing-Service/log-processor/internal/api"
 	"github.com/ali-assar/Log-Processing-Service/log-processor/internal/cli"
 	receiver "github.com/ali-assar/Log-Processing-Service/log-processor/internal/receiver"
 	"github.com/ali-assar/Log-Processing-Service/log-processor/internal/workerpool"
@@ -67,6 +69,20 @@ func main() {
 			}
 		}()
 	}
+
+	mux := http.NewServeMux()
+	api.RegisterRoutes(mux, func() workerpool.Stats { return pool.Stats() })
+
+	srv := &http.Server{Addr: ":9090", Handler: mux}
+
+	// Start server
+	go func() {
+		log.Printf("API listening on %s", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("api server error: %v", err)
+			cancel()
+		}
+	}()
 
 	select {
 	case <-ctx.Done():
