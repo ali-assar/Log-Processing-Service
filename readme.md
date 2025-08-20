@@ -1,155 +1,123 @@
-## 🚀 Real-World Project: Log Processing Service
+# Log Processing Service
 
-### 🎯 Project Goal
+A learning-focused, concurrent log processing pipeline composed of:
+- mock-log-generator: a WebSocket server that emits JSON log messages.
+- log-processor: a client that connects to one or more WebSocket sources, parses messages, and processes them via a bounded worker pool. It exposes a tiny HTTP API for health and stats.
 
-Build a **Log Processing Service** that simulates how real backend systems process logs concurrently, aggregate statistics, and serve results via an HTTP API.
+## Architecture
 
-This project demonstrates:
+WebSocket Sources (fan-in) -> Receiver (wsclient) -> Parser (validation/normalize) -> Worker Pool (bounded, N workers) -> Storage (in-memory; pluggable for SQLite)
 
-* Efficient concurrency with worker pools.
-* Real-world patterns (fan-in, fan-out, cancellations).
-* Integration with a database.
-* Exposing results via REST API.
+Key properties:
+- Fan-in: multiple websocket URLs share one pool.
+- Backpressure: bounded queue; overload can drop with timeout.
+- Graceful shutdown: context cancellation closes sockets and drains workers.
+- Health/Stats: HTTP server publishes pool stats.
 
----
+## Requirements
 
-## 🏗️ System Design
+- Go 1.21+ (recommended 1.22+)
+- Windows PowerShell examples below; adapt paths for your OS.
 
-### **Architecture**
+## Quick Start
 
-1. **Input Layer**
+Terminal 1: start the mock generator
+- Default: listen on :8080 and emit logs at a fixed or random interval.
 
-   * Logs are fed into the system (from files or API).
-
-2. **Processing Layer (Worker Pool)**
-
-   * Multiple workers parse log entries concurrently.
-   * Each worker extracts error counts, warnings, etc.
-
-3. **Aggregation Layer (Fan-In)**
-
-   * Collect results from workers.
-   * Update database with aggregated statistics.
-
-4. **Query Layer (HTTP Server)**
-
-   * REST endpoints to fetch statistics (e.g., total errors, error frequency, logs per service).
-
----
-
-## 📋 Features
-
-1. **Concurrent Log Processing**
-
-   * Goroutines + channels for job distribution.
-   * Worker pool to limit concurrency.
-
-2. **Error Counting & Storage**
-
-   * Parse logs for error/warning/info levels.
-   * Store results in SQLite/Postgres (start simple with SQLite).
-
-3. **Graceful Shutdown**
-
-   * Use `context.WithCancel` to stop workers.
-   * Handle OS signals (`SIGINT`, `SIGTERM`).
-
-4. **HTTP Query API**
-
-   * Endpoint: `/stats` → Returns aggregated error counts.
-   * Endpoint: `/stats/:service` → Service-specific stats.
-
----
-
-## 📂 Project Structure
-
-```
-log-processing-service/
-│── cmd/
-│   └── main.go           # Entry point
-│
-│── internal/
-│   ├── workerpool/       # Worker pool implementation
-│   ├── parser/           # Log parsing logic
-│   ├── storage/          # Database layer
-│   └── api/              # HTTP server & handlers
-│
-│── pkg/
-│   └── models/           # Data models (LogEntry, Stats)
-│
-│── configs/
-│   └── config.yaml       # Configs (DB, server port, etc.)
-│
-│── logs/                 # Sample input log files
-│── go.mod
-│── README.md
+```powershell
+go run .\mock-log-generator\cmd\main.go --url :8080 --interval-ms 250
+# Per-connection override:
+# ws://localhost:8080/ws/logs?interval_ms=50
 ```
 
----
+Terminal 2: start the processor with one or more sources
+```powershell
+go run .\log-processor\cmd\main.go --urls "ws://localhost:8080/ws/logs" --http-addr ":9090"
+# Multiple sources:
+# go run .\log-processor\cmd\main.go --urls "ws://localhost:8080/ws/logs,ws://localhost:9090/ws/logs" --http-addr ":9090"
+```
 
-## 🛠️ Tech Stack
+Check health and stats:
+```powershell
+curl http://localhost:9090/healthz
+curl http://localhost:9090/stats
+```
 
-* **Go** (Concurrency, net/http, context)
-* **SQLite/Postgres** (Persistent storage)
-* **Docker** (Optional: for containerized deployment)
-* **Makefile** (Optional: build/run automation)
+Example /stats response:
+```json
+{
+  "Processed": 12345,
+  "Queue": 12,
+  "Workers": 50
+}
+```
 
----
+## CLI Reference
 
-## 📅 Suggested Weekly Breakdown
+mock-log-generator
+- --url, -u: HTTP listen address (e.g., :8080)
+- --interval-ms, -i: default interval in ms (0 = random per connection; clients may override via ?interval_ms=NN)
 
-### **Week 1: Concurrency Foundations**
+log-processor
+- --urls, -u: comma-separated WebSocket URLs (e.g., ws://localhost:8080/ws/logs,ws://localhost:9090/ws/logs)
+- --http-addr, -a: HTTP listen address for the stats API (default :9090)
 
-* Refresh goroutines, channels, select.
-* Implement small exercises (fan-in, fan-out, worker pools).
+## Runtime Logs
 
-### **Week 2: Worker Pool & Log Parsing**
+Receiver connection
+- “Connecting to WebSocket server at: …”
+- “Successfully connected to WebSocket server”
+- Ping/pong keepalive logged at debug level.
 
-* Implement worker pool.
-* Write parser for log files (simple regex or structured).
-* Test parsing with multiple workers.
+Per-connection summaries (every 100 msgs or ~2s)
+- “ws=<url> total=<N> ok=<parsedOK> parse_err=<parseErrs> ignored=<ignored> submitted=<submitted> dropped=<dropped> queue=<q> processed=<p> workers=<w>”
 
-### **Week 3: Aggregation & Storage**
+Notes
+- The generator sends an initial handshake JSON without “level”. The receiver probes payloads and “ignored” counts reflect such control frames.
+- Parser validates level (INFO/WARN/ERROR), timestamp sanity (+/- 7d), and non-empty service/message.
 
-* Add fan-in aggregator.
-* Connect workers to SQLite.
-* Store error counts and statistics.
+## Concurrency & Backpressure
 
-### **Week 4: HTTP API & Graceful Shutdown**
+Worker Pool
+- N workers consume from a buffered jobs channel.
+- pool.SubmitWithTimeout(entry, 10*time.Millisecond) applies backpressure: under load, submissions may be dropped to keep the system responsive.
 
-* Expose `/stats` endpoint.
-* Add service-level queries.
-* Implement context cancellations for shutdown.
-* Final integration + tests.
+Tune
+- Increase workers to raise throughput until CPU or storage becomes the bottleneck.
+- Adjust queue size to absorb bursts.
+- The in-memory storage uses a mutex to safely aggregate counts.
 
----
+Shutdown
+- Ctrl+C triggers context cancellation:
+  - Receivers close WebSocket connections (normal close frame).
+  - Pool cancels workers and waits for them to finish.
 
-## ✅ Deliverables
+## Project Layout
 
-* A working **log processing service**.
-* Ability to process multiple logs concurrently.
-* Aggregated stats stored in a DB.
-* REST API to query results.
-* Proper handling of cancellations and shutdowns.
+- mock-log-generator/
+  - internal/cli: flags for listen address and default interval
+  - internal/ws: WebSocket handler that emits logs (with optional per-connection interval)
+  - cmd/main.go: server bootstrap
+- log-processor/
+  - internal/cli: URLs and API listen address
+  - internal/receiver: wsclient.go (connect, read, probe, parse, submit)
+  - internal/parser: parser.go (JSON -> models.LogEntry with validation)
+  - internal/workerpool: pool.go (bounded queue, N workers, stats)
+  - internal/api: server.go (/healthz, /stats)
+  - cmd/main.go: wiring (pool, receivers, HTTP API)
 
----
+Models
+- pkg/models: LogEntry struct used across the pipeline.
 
-## 🧪 Local Mock Log Generator
+## Troubleshooting
 
-A lightweight WebSocket stream to feed the system during development.
+- “parse error: invalid level”: often the initial handshake frame (no “level”). The receiver ignores such frames; if you still see errors, inspect payload via temporary logs to confirm field names.
+- Drops increasing: raise queue size, worker count, or relax Submit timeout. If storage becomes a hotspot, consider batching in workers or swapping to a DB-backed storage.
+- “concurrent map writes”: ensure storage uses a mutex (the in-memory example already does).
 
-- Endpoint: WS ws://localhost:8080/ws/logs
-- Message format: JSON per message (one log entry)
-- Query params:
-  - interval_ms: integer (10..10000). Default: random up to 1000ms.
-  - service: fixed service name override (e.g., auth).
-  - level: fixed level override (INFO|WARN|ERROR).
-  - level_weights: weighted distribution for levels. Format: INFO:70,WARN:20,ERROR:10
-  - debug: if present, logs each emitted line on the server.
+## Next Steps
 
-Examples:
-- websocat ws://localhost:8080/ws/logs?interval_ms=200&level_weights=INFO:80,WARN:15,ERROR:5
-- websocat ws://localhost:8080/ws/logs?service=payments&level=ERROR&debug=1
-
-Sample message:
-{"timestamp": 1735668123456, "level": "INFO", "message": "order created", "service": "orders", "component": "api", "trace_id": "...", "span_id": "...", "parent_id": "..."}
+- Replace in-memory storage with SQLite (implement the Storage interface).
+- Add batching/flush intervals if moving to a DB.
+- Expose aggregated counters via the HTTP API.
+- Add unit tests for parser and pool behavior under load.
