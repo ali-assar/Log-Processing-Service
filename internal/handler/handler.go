@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/ali-assar/Real-Time-Order-Processor.git/internal/pkg/models"
+	"github.com/ali-assar/Real-Time-Order-Processor.git/internal/processor"
 )
 
-func CreateOrderHandler(w http.ResponseWriter, r *http.Request) {
+func CreateOrderHandler(w http.ResponseWriter, r *http.Request, pool *processor.Pool) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -37,6 +38,8 @@ func CreateOrderHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(o)
+
+	pool.Orders <- o
 
 }
 

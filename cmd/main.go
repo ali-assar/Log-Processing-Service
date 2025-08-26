@@ -1,16 +1,27 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
 	"github.com/ali-assar/Real-Time-Order-Processor.git/internal/handler"
+	"github.com/ali-assar/Real-Time-Order-Processor.git/internal/processor"
 )
 
 func main() {
 
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	pool := processor.Start(context.Background(), 10, 100)
+	defer processor.Close(pool)
+
+	go func() {
+		for result := range pool.Results {
+			log.Printf("Order %s processed", result.ID)
+		}
+	}()
+
+	handler.RegisterRoutes(mux, pool)
 
 	srv := &http.Server{
 		Addr:    ":8080",
