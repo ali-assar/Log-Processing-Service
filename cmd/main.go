@@ -15,9 +15,16 @@ func main() {
 	pool := processor.Start(context.Background(), 10, 100)
 	defer processor.Close(pool)
 
+	// Start result processor goroutine
 	go func() {
 		for result := range pool.Results {
-			log.Printf("Order %s processed", result.ID)
+			if result.Success {
+				log.Printf("✅ Order %s processed successfully by worker %d in %dms: %s",
+					result.Order.ID, result.WorkerID, result.ProcessingTime, result.Result)
+			} else {
+				log.Printf("❌ Order %s processing failed by worker %d: %s",
+					result.Order.ID, result.WorkerID, result.Error)
+			}
 		}
 	}()
 
